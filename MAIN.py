@@ -25,7 +25,7 @@ st.sidebar.header("Setup & Filters")
 @st.cache_data
 def load_and_clean_data(file_path):
     try:
-        # Polars scans files instantly to find columns
+        # Step 1: Read only 1 row to analyze columns without loading data into RAM
         preview = pl.read_csv(file_path, n_rows=1)
         molecule_col = preview.columns[0]
         
@@ -33,11 +33,11 @@ def load_and_clean_data(file_path):
         numeric_cols = [col for col in preview.columns if preview[col].dtype.is_numeric()]
         keep_cols = [molecule_col] + numeric_cols
         
-        # Read file with only the necessary columns and drop duplicates efficiently
+        # Step 2: Read only necessary columns and drop duplicates efficiently
         df = pl.read_csv(file_path, columns=keep_cols)
         df = df.unique()
         
-        # Cast numeric columns to float32 to save 50% memory
+        # Step 3: Cast numeric columns to float32 to save 50% memory
         df = df.with_columns([pl.col(col).cast(pl.Float32) for col in numeric_cols])
         return df
     except Exception as e:
@@ -56,9 +56,17 @@ if df is None:
 molecule_col = df.columns[0]
 numeric_cols = [col for col in df.columns if df[col].dtype.is_numeric()]
 
-# Sidebar Filter
+# --- CRITICAL MEMORY FIX 1: OPTIMIZE SIDEBAR SELECTBOX ---
+# Pull unique list using Polars (very fast)
 all_molecules = df[molecule_col].unique().to_list()
-selected_molecule = st.sidebar.selectbox("Select a Specific Molecule to Focus On:", ["All"] + all_molecules)
+
+# If you have > 2,000 unique items, a standard selectbox will crash the browser.
+# We limit the options or tell users to use a search-friendly interface.
+if len(all_molecules) > 1000:
+    st.sidebar.warning("⚠️ High molecule count detected. Use the Inspector section at the bottom for micro-analysis to prevent crashes.")
+    selected_molecule = "All"
+else:
+    selected_molecule = st.sidebar.selectbox("Select a Specific Molecule to Focus On:", ["All"] + all_molecules)
 
 # Filter safely
 if selected_molecule != "All":
@@ -82,8 +90,8 @@ with col4:
     st.metric("Current Filter View", selected_molecule)
 
 with st.expander("View Raw Cleaned Data Summary"):
-    # Describe uses minimal memory and converts to pandas only for display
-    st.dataframe(filtered_df.describe().to_pandas(), use_container_width=True)
+    # Fix: Use .head(100) on describe to prevent massive rendering workloads
+    st.dataframe(filtered_df.describe().to_pandas().head(100), use_container_width=True)
 
 # ----------------------------------------
 # DATA VISUALIZATION (Memory Protected)
@@ -91,8 +99,8 @@ with st.expander("View Raw Cleaned Data Summary"):
 st.header("📈 Data Visualization & Distribution")
 tab1, tab2 = st.tabs(["Univariate Analysis", "Bivariate Analysis"])
 
-# To protect the browser and server from crashing, sample the data for plotting if it's huge
-MAX_PLOT_ROWS = 25000
+# Dynamic sampling ceiling lowered slightly for guaranteed stability on free hosts
+MAX_PLOT_ROWS = 15000 
 if filtered_df.height > MAX_PLOT_ROWS:
     plot_df = filtered_df.sample(n=MAX_PLOT_ROWS, seed=42)
     st.caption(f"⚠️ Data contains {filtered_df.height} rows. Plot dynamically sampled to {MAX_PLOT_ROWS} rows to prevent memory crashes.")
@@ -104,7 +112,6 @@ with tab1:
     if len(numeric_cols) > 0:
         primary_metric = st.selectbox("Select metric to plot distribution:", numeric_cols, index=0)
         
-        # Plot using native pandas conversion right at chart generation
         fig_hist = px.histogram(
             plot_df.select([primary_metric]).to_pandas(), 
             x=primary_metric, 
@@ -139,25 +146,23 @@ with tab2:
 st.header("🏆 Drug Targets Ranked By Activity Score")
 st.markdown("This section reshapes the dataset to order the tested drug targets from highest score (Rank 1) to lowest score for each molecule.")
 
-# Perform Melt and Rank operations inside Polars (uses significantly less memory than pandas)
+# Perform Melt and Rank operations inside Polars
 long_df_pl = (
     filtered_df.unpivot(index=molecule_col, on=numeric_cols, variable_name="Drug", value_name="Score")
     .drop_nulls(subset=["Score"])
     .sort([molecule_col, "Score"], descending=[False, True])
 )
 
-# Calculate Rank grouping by Molecule
 long_df_pl = long_df_pl.with_columns(
     pl.int_range(1, pl.len() + 1).over(molecule_col).alias("Rank")
 )
 
-# Compute wide dynamic ranking table only if safe, or display optimization message
-if filtered_df.height < 5000:
+# Lowered safety limit threshold to prevent aggressive memory usage on pivot
+if filtered_df.height < 2000:
     drug_wide_pl = (
         long_df_pl.with_columns(pl.format("Rank_{}", pl.col("Rank")).alias("Rank_Str"))
         .pivot(on="Rank_Str", index=molecule_col, values="Drug")
     )
-    # Keep original file sorting order
     orig_order = filtered_df.select(molecule_col)
     drug_wide_pl = orig_order.join(drug_wide_pl, on=molecule_col, how="left")
     
@@ -169,7 +174,7 @@ if filtered_df.height < 5000:
         mime="text/csv"
     )
 else:
-    st.warning("⚠️ Full reshape-to-wide table for downloding is blocked because your active workspace data is too massive. Filter your molecule focus on the sidebar to enable download features.")
+    st.warning("⚠️ Full reshape-to-wide table for downloading is disabled because your active workspace data is too massive. Filter your molecule focus on the sidebar (if available) to enable download features.")
 
 # ----------------------------------------
 # INTERACTIVE MOLECULE QUERY FORM
@@ -177,11 +182,21 @@ else:
 st.header("🔍 Molecule Activity Inspector")
 st.markdown("Select a specific molecule below to see a sorted breakdown of its ideal drug targets alongside their exact calculated values.")
 
-selected_inspect = st.selectbox("Inspect specific molecule details:", all_molecules)
+# Dynamic text input or clean selectbox for safety
+selected_inspect = st.selectbox("Inspect specific molecule details:", all_molecules, key="inspect_box")
 
 # Filter the already-melted Polars dataframe directly 
 molecule_data_pl = long_df_pl.filter(pl.col(molecule_col) == selected_inspect).sort("Rank")
-molecule_data_pd = molecule_data_pl.to_pandas()
+
+# --- CRITICAL MEMORY FIX 2: LIMIT PLOT AND FIX TABLE ---
+# If a molecule contains hundreds of drug targets, limit what is mapped visually
+if molecule_data_pl.height > 100:
+    st.info(f"💡 Showing top 100 highest ranked targets out of {molecule_data_pl.height} total to maintain app performance.")
+    molecule_data_pl_limited = molecule_data_pl.head(100)
+else:
+    molecule_data_pl_limited = molecule_data_pl
+
+molecule_data_pd = molecule_data_pl_limited.to_pandas()
 
 if not molecule_data_pd.empty:
     fig_bar = px.bar(
@@ -191,11 +206,14 @@ if not molecule_data_pd.empty:
         orientation='h',
         color="Score",
         text="Rank",
-        title=f"Drug Target Activity Hierarchy for Molecule: {selected_inspect}",
-        color_continuous_scale="Viridis"
+        title=f"Top Drug Target Activity Hierarchy for Molecule: {selected_inspect}",
+        color_continuous_scale="Viridis",
+        height=max(400, len(molecule_data_pd) * 20) # Dynamic height based on row count
     )
     fig_bar.update_layout(yaxis={'categoryorder':'total ascending'})
     st.plotly_chart(fig_bar, use_container_width=True)
-    st.table(molecule_data_pd[["Rank", "Drug", "Score"]])
+    
+    # CRITICAL CHANGE: Changed from st.table to st.dataframe to utilize lazy canvas streaming 
+    st.dataframe(molecule_data_pd[["Rank", "Drug", "Score"]], use_container_width=True, hide_index=True)
 else:
     st.info("No active data entries found for this molecule.")
