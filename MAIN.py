@@ -26,21 +26,26 @@ st.sidebar.header("Setup & Filters")
 # DATA LOADING & CLEANING (Functionality 1)
 # ----------------------------------------
 @st.cache_data
-def load_and_clean_data(file_path="QSAR.csv"):
+def load_and_clean_data(file_path):
     try:
-        # Load data
+        # Load data directly from the web URL
         df = pd.read_csv(file_path)
-    except FileNotFoundError:
+    except Exception as e:
         return None
     
-    # 1. Data Cleaning
+    # Data Cleaning
     df.drop_duplicates(inplace=True)
     return df
 
-df = load_and_clean_data()
+# Your Google Drive view link converted into a direct download stream URL
+GOOGLE_DRIVE_CSV_URL = "https://drive.google.com/uc?export=download&id=1fnPYHehOo-DhgJRCjGD07ozM7Tw75CjL"
+
+# Add a visual loading spinner since a 200MB file takes a moment to fetch
+with st.spinner("Downloading and processing dataset from Google Drive... Please wait."):
+    df = load_and_clean_data(GOOGLE_DRIVE_CSV_URL)
 
 if df is None:
-    st.error("⚠️ 'QSAR.csv' file not found. Please place your QSAR.csv file in the same directory as this script.")
+    st.error("⚠️ Failed to load data from Google Drive. Please verify your connection or your file link sharing permissions.")
     st.stop()
 
 molecule_col = df.columns[0]
@@ -69,7 +74,7 @@ with col4:
     st.metric("Current Filter View", selected_molecule)
 
 with st.expander("View Raw Cleaned Data Summary"):
-    st.dataframe(filtered_df.describe(), width='stretch')
+    st.dataframe(filtered_df.describe(), use_container_width=True)
 
 
 # ----------------------------------------
@@ -84,15 +89,15 @@ with tab1:
     if len(numeric_cols) > 0:
         primary_metric = st.selectbox("Select metric to plot distribution:", numeric_cols, index=0)
         
-        # Plotly Express histogram fix (marginal="rug" creates a density distribution visual alongside)
+        # Plotly Express histogram
         fig_hist = px.histogram(
             filtered_df, 
             x=primary_metric, 
-            marginal="rug",  # Added for distribution insight since kde is not natively in px.histogram
+            marginal="rug",  
             title=f"Distribution of {primary_metric}",
             color_discrete_sequence=['#1f77b4']
         )
-        st.plotly_chart(fig_hist, width='stretch')
+        st.plotly_chart(fig_hist, use_container_width=True)
     else:
         st.warning("No numeric columns available for distribution analysis.")
 
@@ -110,7 +115,7 @@ with tab2:
             title=f"{x_axis} vs {y_axis}",
             color_discrete_sequence=['#ff7f0e']
         )
-        st.plotly_chart(fig_scatter, width='stretch')
+        st.plotly_chart(fig_scatter, use_container_width=True)
     else:
         st.warning("Need at least 2 numeric features to display a scatter relationship.")
 
@@ -147,8 +152,6 @@ drug_wide = drug_wide.reset_index()
 drug_wide["_orig_sort"] = drug_wide[molecule_col].map(orig_order_map)
 drug_wide = drug_wide.sort_values("_orig_sort").drop(columns=["_orig_sort"])
 
-#st.dataframe(drug_wide, width='stretch')
-
 # Allow download of the processed rankings
 csv_data = drug_wide.to_csv(index=False).encode('utf-8')
 st.download_button(
@@ -182,7 +185,7 @@ if not molecule_data.empty:
     )
     # Reverse y-axis so Rank 1 stays at the top of the bar chart
     fig_bar.update_layout(yaxis={'categoryorder':'total ascending'})
-    st.plotly_chart(fig_bar, width='stretch')
+    st.plotly_chart(fig_bar, use_container_width=True)
     
     st.table(molecule_data[["Rank", "Drug", "Score"]])
 else:
