@@ -37,8 +37,7 @@ def load_and_clean_data(file_path):
     df.drop_duplicates(inplace=True)
     return df
 
-# ⚠️ REPLACE THIS LINK with your actual copied GitHub Release Asset link!
-GITHUB_RELEASE_URL = "https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME/releases/download/v1.0.0/YOUR_FILE_NAME.csv"
+GITHUB_RELEASE_URL = "https://github.com/morlockmaimai-ui/Drug-Target-Activity-Analyzer-/releases/tag/v1.0.0"
 
 # Add a visual loading spinner since downloading a 200MB file takes a moment
 with st.spinner("Streaming dataset from GitHub assets... Please wait."):
