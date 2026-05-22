@@ -3,14 +3,6 @@ import pandas as pd
 import plotly.express as px
 import plotly.figure_factory as ff
 
-@st.cache_data
-def load_data():
-    # Replace with your modified Google Drive download link
-    google_drive_url = "https://drive.google.com/uc?export=download&id=1fnPYHehOo-DhgJRCjGD07ozM7Tw75CjL"
-    return pd.read_csv(google_drive_url)
-
-df = load_data()
-
 # Set page configuration
 st.set_page_config(
     page_title="QSAR Drug Target Analyzer",
