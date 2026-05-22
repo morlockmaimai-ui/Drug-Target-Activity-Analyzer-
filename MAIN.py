@@ -28,7 +28,7 @@ st.sidebar.header("Setup & Filters")
 @st.cache_data
 def load_and_clean_data(file_path):
     try:
-        # Load data directly from the web URL
+        # Load data directly from the GitHub Release Asset URL
         df = pd.read_csv(file_path)
     except Exception as e:
         return None
@@ -37,16 +37,15 @@ def load_and_clean_data(file_path):
     df.drop_duplicates(inplace=True)
     return df
 
-# Copy the ID carefully: 1fnPYHehOo-DhgJRCjGD07ozM7Tw75CjL
-# This alternative link structure forces Google to bypass the large file warning
-GOOGLE_DRIVE_CSV_URL = "https://docs.google.com/uc?export=download&confirm=t&id=1fnPYHehOo-DhgJRCjGD07ozM7Tw75CjL"
+# ⚠️ REPLACE THIS LINK with your actual copied GitHub Release Asset link!
+GITHUB_RELEASE_URL = "https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME/releases/download/v1.0.0/YOUR_FILE_NAME.csv"
 
-# Add a visual loading spinner since a 200MB file takes a moment to fetch
-with st.spinner("Downloading and processing dataset from Google Drive... Please wait."):
-    df = load_and_clean_data(GOOGLE_DRIVE_CSV_URL)
+# Add a visual loading spinner since downloading a 200MB file takes a moment
+with st.spinner("Streaming dataset from GitHub assets... Please wait."):
+    df = load_and_clean_data(GITHUB_RELEASE_URL)
 
 if df is None:
-    st.error("⚠️ Failed to load data from Google Drive. Please verify your connection or your file link sharing permissions.")
+    st.error("⚠️ Failed to load data from GitHub Releases. Please verify that your release link is correct and the repository is public.")
     st.stop()
 
 molecule_col = df.columns[0]
