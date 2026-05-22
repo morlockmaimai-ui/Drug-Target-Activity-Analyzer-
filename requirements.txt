@@ -1,4 +1,7 @@
 streamlit
 polars
+pyarrow
+fsspec
+requests
 plotly
 pandas
