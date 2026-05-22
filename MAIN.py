@@ -1,7 +1,6 @@
 import streamlit as st
-import pandas as pd
+import polars as pl
 import plotly.express as px
-import plotly.figure_factory as ff
 
 # Set page configuration
 st.set_page_config(
@@ -15,52 +14,57 @@ st.set_page_config(
 # ----------------------------------------
 st.title("🧬 QSAR Drug Target Activity Analyzer")
 st.markdown("""
-**Welcome to the QSAR Data Dashboard.** This application is designed to analyze Quantitative Structure-Activity Relationship (QSAR) datasets, specifically focusing on how different molecules interact with various drug targets. 
+**Welcome to the QSAR Data Dashboard.** This application is optimized to analyze massive Quantitative Structure-Activity Relationship (QSAR) datasets efficiently.
 """)
 
 st.sidebar.header("Setup & Filters")
 
 # ----------------------------------------
-# DATA LOADING & CLEANING (Optimized)
+# DATA LOADING & CLEANING (Polars-Optimized)
 # ----------------------------------------
 @st.cache_data
 def load_and_clean_data(file_path):
     try:
-        preview = pd.read_csv(file_path, nrows=1)
+        # Polars scans files instantly to find columns
+        preview = pl.read_csv(file_path, n_rows=1)
         molecule_col = preview.columns[0]
         
-        all_cols = preview.columns.tolist()
-        numeric_cols = preview.select_dtypes(include="number").columns.tolist()
+        # Identify numeric columns
+        numeric_cols = [col for col in preview.columns if preview[col].dtype.is_numeric()]
         keep_cols = [molecule_col] + numeric_cols
         
-        df = pd.read_csv(file_path, usecols=keep_cols)
+        # Read file with only the necessary columns and drop duplicates efficiently
+        df = pl.read_csv(file_path, columns=keep_cols)
+        df = df.unique()
         
-        for col in numeric_cols:
-            df[col] = pd.to_numeric(df[col], downcast='float')
-            
+        # Cast numeric columns to float32 to save 50% memory
+        df = df.with_columns([pl.col(col).cast(pl.Float32) for col in numeric_cols])
+        return df
     except Exception as e:
         return None
-    
-    df.drop_duplicates(inplace=True)
-    return df
 
 GITHUB_RELEASE_URL = "https://github.com/morlockmaimai-ui/Drug-Target-Activity-Analyzer-/releases/download/v1.0.0/QSAR.csv"
 
-with st.spinner("Streaming dataset efficiently from GitHub assets... Please wait."):
+with st.spinner("Streaming dataset efficiently via Polars... Please wait."):
     df = load_and_clean_data(GITHUB_RELEASE_URL)
 
 if df is None:
     st.error("⚠️ Failed to load data. Verify your Release Link format or check if your repository is public.")
     st.stop()
 
+# Track schema information
 molecule_col = df.columns[0]
-numeric_cols = df.select_dtypes(include="number").columns.tolist()
+numeric_cols = [col for col in df.columns if df[col].dtype.is_numeric()]
 
-# Sidebar: Filter Molecule globally or view all
-all_molecules = df[molecule_col].unique().tolist()
+# Sidebar Filter
+all_molecules = df[molecule_col].unique().to_list()
 selected_molecule = st.sidebar.selectbox("Select a Specific Molecule to Focus On:", ["All"] + all_molecules)
 
-filtered_df = df if selected_molecule == "All" else df[df[molecule_col] == selected_molecule]
+# Filter safely
+if selected_molecule != "All":
+    filtered_df = df.filter(pl.col(molecule_col) == selected_molecule)
+else:
+    filtered_df = df
 
 # ----------------------------------------
 # METRICS & KEY STATISTICS
@@ -73,28 +77,37 @@ with col1:
 with col2:
     st.metric("Total Drug Targets Tested", len(numeric_cols))
 with col3:
-    st.metric("Dataset Rows (Cleaned)", df.shape[0])
+    st.metric("Dataset Rows (Cleaned)", df.height)
 with col4:
     st.metric("Current Filter View", selected_molecule)
 
 with st.expander("View Raw Cleaned Data Summary"):
-    st.dataframe(filtered_df.describe(), use_container_width=True)
-
+    # Describe uses minimal memory and converts to pandas only for display
+    st.dataframe(filtered_df.describe().to_pandas(), use_container_width=True)
 
 # ----------------------------------------
-# DATA VISUALIZATION
+# DATA VISUALIZATION (Memory Protected)
 # ----------------------------------------
 st.header("📈 Data Visualization & Distribution")
 tab1, tab2 = st.tabs(["Univariate Analysis", "Bivariate Analysis"])
+
+# To protect the browser and server from crashing, sample the data for plotting if it's huge
+MAX_PLOT_ROWS = 25000
+if filtered_df.height > MAX_PLOT_ROWS:
+    plot_df = filtered_df.sample(n=MAX_PLOT_ROWS, seed=42)
+    st.caption(f"⚠️ Data contains {filtered_df.height} rows. Plot dynamically sampled to {MAX_PLOT_ROWS} rows to prevent memory crashes.")
+else:
+    plot_df = filtered_df
 
 with tab1:
     st.subheader("Distribution of Primary Metric")
     if len(numeric_cols) > 0:
         primary_metric = st.selectbox("Select metric to plot distribution:", numeric_cols, index=0)
+        
+        # Plot using native pandas conversion right at chart generation
         fig_hist = px.histogram(
-            filtered_df, 
+            plot_df.select([primary_metric]).to_pandas(), 
             x=primary_metric, 
-            marginal="rug",  
             title=f"Distribution of {primary_metric}",
             color_discrete_sequence=['#1f77b4']
         )
@@ -109,7 +122,7 @@ with tab2:
         y_axis = st.selectbox("Select Y-axis metric:", numeric_cols, index=min(1, len(numeric_cols)-1))
         
         fig_scatter = px.scatter(
-            filtered_df, 
+            plot_df.select([molecule_col, x_axis, y_axis]).to_pandas(), 
             x=x_axis, 
             y=y_axis, 
             hover_name=molecule_col,
@@ -120,43 +133,43 @@ with tab2:
     else:
         st.warning("Need at least 2 numeric features to display a scatter relationship.")
 
-
 # ----------------------------------------
-# DRUG RANKING SYSTEM 
+# DRUG RANKING SYSTEM (Optimized Long-Melt)
 # ----------------------------------------
 st.header("🏆 Drug Targets Ranked By Activity Score")
 st.markdown("This section reshapes the dataset to order the tested drug targets from highest score (Rank 1) to lowest score for each molecule.")
 
-orig_order_map = {mol: i for i, mol in enumerate(df[molecule_col])}
-
-numeric_df = filtered_df.select_dtypes(include="number").copy()
-numeric_df[molecule_col] = filtered_df[molecule_col]
-
-# Melt to long format
-long_df = numeric_df.melt(
-    id_vars=molecule_col,
-    var_name="Drug",
-    value_name="Score"
-).dropna(subset=["Score"])
-
-long_df = long_df.sort_values([molecule_col, "Score"], ascending=[True, False])
-long_df["Rank"] = long_df.groupby(molecule_col).cumcount() + 1
-
-drug_wide = long_df.pivot(index=molecule_col, columns="Rank", values="Drug")
-drug_wide.columns = [f"Rank_{int(c)}" for c in drug_wide.columns]
-drug_wide = drug_wide.reset_index()
-
-drug_wide["_orig_sort"] = drug_wide[molecule_col].map(orig_order_map)
-drug_wide = drug_wide.sort_values("_orig_sort").drop(columns=["_orig_sort"])
-
-csv_data = drug_wide.to_csv(index=False).encode('utf-8')
-st.download_button(
-    label="📥 Download Ranked Drugs CSV",
-    data=csv_data,
-    file_name="qsar_ranked_drugs.csv",
-    mime="text/csv"
+# Perform Melt and Rank operations inside Polars (uses significantly less memory than pandas)
+long_df_pl = (
+    filtered_df.unpivot(index=molecule_col, on=numeric_cols, variable_name="Drug", value_name="Score")
+    .drop_nulls(subset=["Score"])
+    .sort([molecule_col, "Score"], descending=[False, True])
 )
 
+# Calculate Rank grouping by Molecule
+long_df_pl = long_df_pl.with_columns(
+    pl.int_range(1, pl.len() + 1).over(molecule_col).alias("Rank")
+)
+
+# Compute wide dynamic ranking table only if safe, or display optimization message
+if filtered_df.height < 5000:
+    drug_wide_pl = (
+        long_df_pl.with_columns(pl.format("Rank_{}", pl.col("Rank")).alias("Rank_Str"))
+        .pivot(on="Rank_Str", index=molecule_col, values="Drug")
+    )
+    # Keep original file sorting order
+    orig_order = filtered_df.select(molecule_col)
+    drug_wide_pl = orig_order.join(drug_wide_pl, on=molecule_col, how="left")
+    
+    csv_data = drug_wide_pl.write_csv().encode('utf-8')
+    st.download_button(
+        label="📥 Download Ranked Drugs CSV",
+        data=csv_data,
+        file_name="qsar_ranked_drugs.csv",
+        mime="text/csv"
+    )
+else:
+    st.warning("⚠️ Full reshape-to-wide table for downloding is blocked because your active workspace data is too massive. Filter your molecule focus on the sidebar to enable download features.")
 
 # ----------------------------------------
 # INTERACTIVE MOLECULE QUERY FORM
@@ -165,11 +178,14 @@ st.header("🔍 Molecule Activity Inspector")
 st.markdown("Select a specific molecule below to see a sorted breakdown of its ideal drug targets alongside their exact calculated values.")
 
 selected_inspect = st.selectbox("Inspect specific molecule details:", all_molecules)
-molecule_data = long_df[long_df[molecule_col] == selected_inspect].sort_values("Rank")
 
-if not molecule_data.empty:
+# Filter the already-melted Polars dataframe directly 
+molecule_data_pl = long_df_pl.filter(pl.col(molecule_col) == selected_inspect).sort("Rank")
+molecule_data_pd = molecule_data_pl.to_pandas()
+
+if not molecule_data_pd.empty:
     fig_bar = px.bar(
-        molecule_data,
+        molecule_data_pd,
         x="Score",
         y="Drug",
         orientation='h',
@@ -180,6 +196,6 @@ if not molecule_data.empty:
     )
     fig_bar.update_layout(yaxis={'categoryorder':'total ascending'})
     st.plotly_chart(fig_bar, use_container_width=True)
-    st.table(molecule_data[["Rank", "Drug", "Score"]])
+    st.table(molecule_data_pd[["Rank", "Drug", "Score"]])
 else:
     st.info("No active data entries found for this molecule.")
