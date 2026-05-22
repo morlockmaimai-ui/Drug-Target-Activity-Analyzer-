@@ -37,8 +37,9 @@ def load_and_clean_data(file_path):
     df.drop_duplicates(inplace=True)
     return df
 
-# Your Google Drive view link converted into a direct download stream URL
-GOOGLE_DRIVE_CSV_URL = "https://drive.google.com/uc?export=download&id=1fnPYHehOo-DhgJRCjGD07ozM7Tw75CjL"
+# Copy the ID carefully: 1fnPYHehOo-DhgJRCjGD07ozM7Tw75CjL
+# This alternative link structure forces Google to bypass the large file warning
+GOOGLE_DRIVE_CSV_URL = "https://docs.google.com/uc?export=download&confirm=t&id=1fnPYHehOo-DhgJRCjGD07ozM7Tw75CjL"
 
 # Add a visual loading spinner since a 200MB file takes a moment to fetch
 with st.spinner("Downloading and processing dataset from Google Drive... Please wait."):
