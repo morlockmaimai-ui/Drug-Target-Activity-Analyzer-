@@ -16,35 +16,41 @@ st.set_page_config(
 st.title("🧬 QSAR Drug Target Activity Analyzer")
 st.markdown("""
 **Welcome to the QSAR Data Dashboard.** This application is designed to analyze Quantitative Structure-Activity Relationship (QSAR) datasets, specifically focusing on how different molecules interact with various drug targets. 
-
-By calculating and ranking activity scores, this tool helps researchers instantly identify which drug targets are most effective for a given molecule. Use the sidebar to upload data, filter specific molecules, and explore molecular distributions, feature relationships, and ranking matrices in real time.
 """)
 
 st.sidebar.header("Setup & Filters")
 
 # ----------------------------------------
-# DATA LOADING & CLEANING (Functionality 1)
+# DATA LOADING & CLEANING (Optimized)
 # ----------------------------------------
 @st.cache_data
 def load_and_clean_data(file_path):
     try:
-        # Load data directly from the GitHub Release Asset URL
-        df = pd.read_csv(file_path)
+        preview = pd.read_csv(file_path, nrows=1)
+        molecule_col = preview.columns[0]
+        
+        all_cols = preview.columns.tolist()
+        numeric_cols = preview.select_dtypes(include="number").columns.tolist()
+        keep_cols = [molecule_col] + numeric_cols
+        
+        df = pd.read_csv(file_path, usecols=keep_cols)
+        
+        for col in numeric_cols:
+            df[col] = pd.to_numeric(df[col], downcast='float')
+            
     except Exception as e:
         return None
     
-    # Data Cleaning
     df.drop_duplicates(inplace=True)
     return df
 
 GITHUB_RELEASE_URL = "https://github.com/morlockmaimai-ui/Drug-Target-Activity-Analyzer-/releases/download/v1.0.0/QSAR.csv"
 
-# Add a visual loading spinner since downloading a 200MB file takes a moment
-with st.spinner("Streaming dataset from GitHub assets... Please wait."):
+with st.spinner("Streaming dataset efficiently from GitHub assets... Please wait."):
     df = load_and_clean_data(GITHUB_RELEASE_URL)
 
 if df is None:
-    st.error("⚠️ Failed to load data from GitHub Releases. Please verify that your release link is correct and the repository is public.")
+    st.error("⚠️ Failed to load data. Verify your Release Link format or check if your repository is public.")
     st.stop()
 
 molecule_col = df.columns[0]
@@ -54,11 +60,10 @@ numeric_cols = df.select_dtypes(include="number").columns.tolist()
 all_molecules = df[molecule_col].unique().tolist()
 selected_molecule = st.sidebar.selectbox("Select a Specific Molecule to Focus On:", ["All"] + all_molecules)
 
-# Filter dataset based on selection
 filtered_df = df if selected_molecule == "All" else df[df[molecule_col] == selected_molecule]
 
 # ----------------------------------------
-# METRICS & KEY STATISTICS (Functionality 2)
+# METRICS & KEY STATISTICS
 # ----------------------------------------
 st.header("📊 Key Statistics & Dataset Overview")
 col1, col2, col3, col4 = st.columns(4)
@@ -77,18 +82,15 @@ with st.expander("View Raw Cleaned Data Summary"):
 
 
 # ----------------------------------------
-# DATA VISUALIZATION (Functionality 3)
+# DATA VISUALIZATION
 # ----------------------------------------
 st.header("📈 Data Visualization & Distribution")
-
 tab1, tab2 = st.tabs(["Univariate Analysis", "Bivariate Analysis"])
 
 with tab1:
     st.subheader("Distribution of Primary Metric")
     if len(numeric_cols) > 0:
         primary_metric = st.selectbox("Select metric to plot distribution:", numeric_cols, index=0)
-        
-        # Plotly Express histogram
         fig_hist = px.histogram(
             filtered_df, 
             x=primary_metric, 
@@ -120,12 +122,11 @@ with tab2:
 
 
 # ----------------------------------------
-# DRUG RANKING SYSTEM (Functionality 4)
+# DRUG RANKING SYSTEM 
 # ----------------------------------------
 st.header("🏆 Drug Targets Ranked By Activity Score")
 st.markdown("This section reshapes the dataset to order the tested drug targets from highest score (Rank 1) to lowest score for each molecule.")
 
-# Perform processing dynamically based on user selections
 orig_order_map = {mol: i for i, mol in enumerate(df[molecule_col])}
 
 numeric_df = filtered_df.select_dtypes(include="number").copy()
@@ -138,20 +139,16 @@ long_df = numeric_df.melt(
     value_name="Score"
 ).dropna(subset=["Score"])
 
-# Sort by molecule and highest score
 long_df = long_df.sort_values([molecule_col, "Score"], ascending=[True, False])
 long_df["Rank"] = long_df.groupby(molecule_col).cumcount() + 1
 
-# Pivot back to wide format for the ranking matrix
 drug_wide = long_df.pivot(index=molecule_col, columns="Rank", values="Drug")
 drug_wide.columns = [f"Rank_{int(c)}" for c in drug_wide.columns]
 drug_wide = drug_wide.reset_index()
 
-# Re-align original dataframe order
 drug_wide["_orig_sort"] = drug_wide[molecule_col].map(orig_order_map)
 drug_wide = drug_wide.sort_values("_orig_sort").drop(columns=["_orig_sort"])
 
-# Allow download of the processed rankings
 csv_data = drug_wide.to_csv(index=False).encode('utf-8')
 st.download_button(
     label="📥 Download Ranked Drugs CSV",
@@ -162,13 +159,12 @@ st.download_button(
 
 
 # ----------------------------------------
-# INTERACTIVE MOLECULE QUERY FORM (Functionality 5)
+# INTERACTIVE MOLECULE QUERY FORM
 # ----------------------------------------
 st.header("🔍 Molecule Activity Inspector")
 st.markdown("Select a specific molecule below to see a sorted breakdown of its ideal drug targets alongside their exact calculated values.")
 
 selected_inspect = st.selectbox("Inspect specific molecule details:", all_molecules)
-
 molecule_data = long_df[long_df[molecule_col] == selected_inspect].sort_values("Rank")
 
 if not molecule_data.empty:
@@ -182,10 +178,8 @@ if not molecule_data.empty:
         title=f"Drug Target Activity Hierarchy for Molecule: {selected_inspect}",
         color_continuous_scale="Viridis"
     )
-    # Reverse y-axis so Rank 1 stays at the top of the bar chart
     fig_bar.update_layout(yaxis={'categoryorder':'total ascending'})
     st.plotly_chart(fig_bar, use_container_width=True)
-    
     st.table(molecule_data[["Rank", "Drug", "Score"]])
 else:
     st.info("No active data entries found for this molecule.")
